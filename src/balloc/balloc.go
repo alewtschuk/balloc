@@ -114,12 +114,14 @@ func buddyCalc(pool *BuddyPool, block *Avail) *Avail {
 }
 
 func buddyMalloc(pool *BuddyPool, size uint) (unsafe.Pointer, error) {
-	// Lock malloc and defer unlock till function complete
-	pool.lock.Lock()
-	defer pool.lock.Unlock()
+	// Check if pool is nil
 	if pool == nil || size == 0 {
 		return nil, nil
 	}
+
+	// Lock malloc and defer unlock till function complete
+	pool.lock.Lock()
+	defer pool.lock.Unlock()
 
 	// Get the correct kval (block size) for the request
 	k := btok(uintptr(size) + uintptr(unsafe.Sizeof(Avail{})))
@@ -256,6 +258,8 @@ func buddyDestroy(pool *BuddyPool) error {
 	pool.lock.Lock()
 	defer pool.lock.Unlock()
 
+	const maxPoolSize = uintptr(1) << MAX_K
+
 	// If there is no pool or base is 0, nothing can be destroyed
 	if pool == nil || pool.base == 0 {
 		return nil
@@ -270,12 +274,12 @@ func buddyDestroy(pool *BuddyPool) error {
 	// uses go's three index slice syntax a[low : high : max] this means we
 	// use a slice from 0 to pool.numBytes and no more or less than pool.numBytes
 	// making an exact slice the memory range
-	err := unix.Munmap((*[1 << 30]byte)(dataPtr)[:pool.numBytes:pool.numBytes])
+	err := unix.Munmap((*[maxPoolSize]byte)(dataPtr)[:pool.numBytes:pool.numBytes])
 	if err != nil {
 		return err
 	}
 
-	// Zero the BuddyPool except the mutex lock so the defer can trigger sucessfully
+	// Zero the BuddyPool except the mutex lock so the defer can trigger sucessfullyc
 	pool.base = 0
 	pool.numBytes = 0
 	pool.kvalM = 0
