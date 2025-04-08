@@ -1,0 +1,6 @@
+# MacOS
+.DS_Store
+
+# C files
+*.c
+*.h
