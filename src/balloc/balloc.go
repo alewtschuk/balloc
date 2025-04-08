@@ -103,6 +103,11 @@ func btok(bytes uintptr) uint {
 	return k
 }
 
-func buddyCalc(pool *BuddyPool, avail *Avail) *Avail {
+func buddyCalc(pool *BuddyPool, block *Avail) *Avail {
+	// Calculate offset using go uintptr for pointer arithmetic workaround
+	offset := uintptr(unsafe.Pointer(block)) - pool.base // checks how far into the pool the block of memory is
+	buddyOffset := offset ^ (uintptr(1) << block.kval)   // flip the kth bit to get the buddy's pool location
+	buddyAddr := pool.base + buddyOffset                 // address of the buddy must be the distance of buddyOffset from the pool base
 
+	return (*Avail)(unsafe.Pointer(buddyAddr))
 }
