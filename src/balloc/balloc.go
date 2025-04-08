@@ -245,6 +245,30 @@ func coalesce(pool *BuddyPool, block *Avail) {
 	insertBlock(&pool.avail[block.kval], block) // insert coalesced block into its new avail[k] list
 }
 
-func buddyDestroy(pool *BuddyPool) {
+func buddyDestroy(pool *BuddyPool) error {
+	pool.lock.Lock()
+	defer pool.lock.Unlock()
 
+	// If there is no pool or base is 0, nothing can be destroyed
+	if pool == nil || pool.base == 0 {
+		return nil
+	}
+
+	// Get the pointer to the pool base to use for the unmap
+	dataPtr := unsafe.Pointer(pool.base)
+
+	// Unmaps the memory using byte slice cast as unix.Munmap expects []byte
+	// Cast the dataPointer as a large slice to be trimmed (pretending this is the start of a lare array in memory)
+	// Trims the length of the array to the size and capacity of pool.numBytes
+	// uses go's three index slice syntax a[low : high : max] this means we
+	// use a slice from 0 to pool.numBytes and no more or less than pool.numBytes
+	// making an exact slice the memory range
+	err := unix.Munmap((*[1 << 30]byte)(dataPtr)[:pool.numBytes:pool.numBytes])
+	if err != nil {
+		return err
+	}
+
+	// Zero the BuddyPool
+	*pool = BuddyPool{}
+	return nil
 }
