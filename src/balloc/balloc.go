@@ -216,6 +216,13 @@ func coalesce(pool *BuddyPool, block *Avail) {
 	for {
 		// Locate the buddy
 		buddy := buddyCalc(pool, block)
+
+		// Defensive check: if buddy is outside pool range, bail
+		buddyPtr := uintptr(unsafe.Pointer(buddy))
+		if buddyPtr < pool.base || buddyPtr >= pool.base+pool.numBytes {
+			break // invalid memory: abort coalescing
+		}
+
 		// Check if the buddy is available or if its kvals are innequal(not in the same avail list/size)
 		if buddy.tag != BLOCK_AVAIL || buddy.kval != block.kval {
 			break
@@ -268,7 +275,12 @@ func buddyDestroy(pool *BuddyPool) error {
 		return err
 	}
 
-	// Zero the BuddyPool
-	*pool = BuddyPool{}
+	// Zero the BuddyPool except the mutex lock so the defer can trigger sucessfully
+	pool.base = 0
+	pool.numBytes = 0
+	pool.kvalM = 0
+	for i := range pool.avail {
+		pool.avail[i] = Avail{}
+	}
 	return nil
 }
