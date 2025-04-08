@@ -2,10 +2,8 @@ package balloc
 
 import (
 	"fmt"
-	"math/rand"
 	"os"
 	"testing"
-	"time"
 	"unsafe"
 
 	"github.com/stretchr/testify/assert"
@@ -182,10 +180,4 @@ func TestDestroyTwice(t *testing.T) {
 
 	err = buddyDestroy(&pool)
 	assert.NoError(t, err)
-}
-
-func TestMain(m *testing.M) {
-	rand.Seed(time.Now().UnixNano())
-	fmt.Println("Running memory tests.")
-	os.Exit(m.Run())
 }
