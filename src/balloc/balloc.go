@@ -61,7 +61,9 @@ func buddyInit(pool *BuddyPool, size uintptr) error {
 	pool.numBytes = uintptr(1) << pool.kvalM
 
 	// Memory map a chunk of raw data we will manage
-	data, err := unix.Mmap(-1, 0, int(pool.numBytes), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_PRIVATE|unix.MAP_ANONYMOUS)
+	var data []byte
+	var err error
+	data, err = unix.Mmap(-1, 0, int(pool.numBytes), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_PRIVATE|unix.MAP_ANONYMOUS)
 	if err != nil {
 		return err
 	}
@@ -77,7 +79,7 @@ func buddyInit(pool *BuddyPool, size uintptr) error {
 	}
 
 	// Setup the first block
-	firstBlock := (*Avail)(unsafe.Pointer(pool.base)) // cast raw memory to usable *Avail pointer
+	var firstBlock *Avail = (*Avail)(unsafe.Pointer(pool.base)) // cast raw memory to usable *Avail pointer
 	firstBlock.tag = BLOCK_AVAIL
 	firstBlock.kval = uint16(kval)
 	firstBlock.next = &pool.avail[kval]
@@ -95,7 +97,7 @@ func buddyInit(pool *BuddyPool, size uintptr) error {
 // such that 2^k is >= bytes
 func btok(bytes uintptr) uint {
 	// Init k to the smallest allowed size
-	k := SMALLEST_K
+	var k uint = SMALLEST_K
 	// Finds smallest k value that is >= bytes using bitshifting
 	for (uintptr(1) << k) < bytes {
 		k++
@@ -106,9 +108,9 @@ func btok(bytes uintptr) uint {
 
 func buddyCalc(pool *BuddyPool, block *Avail) *Avail {
 	// Calculate offset using go uintptr for pointer arithmetic workaround
-	offset := uintptr(unsafe.Pointer(block)) - pool.base // checks how far into the pool the block of memory is
-	buddyOffset := offset ^ (uintptr(1) << block.kval)   // flip the kth bit to get the buddy's pool location
-	buddyAddr := pool.base + buddyOffset                 // address of the buddy must be the distance of buddyOffset from the pool base
+	var offset uintptr = uintptr(unsafe.Pointer(block)) - pool.base // checks how far into the pool the block of memory is
+	var buddyOffset uintptr = offset ^ (uintptr(1) << block.kval)   // flip the kth bit to get the buddy's pool location
+	var buddyAddr uintptr = pool.base + buddyOffset                 // address of the buddy must be the distance of buddyOffset from the pool base
 
 	return (*Avail)(unsafe.Pointer(buddyAddr))
 }
@@ -124,13 +126,13 @@ func buddyMalloc(pool *BuddyPool, size uint) (unsafe.Pointer, error) {
 	defer pool.lock.Unlock()
 
 	// Get the correct kval (block size) for the request
-	k := btok(uintptr(size) + uintptr(unsafe.Sizeof(Avail{})))
+	var k uint = btok(uintptr(size) + uintptr(unsafe.Sizeof(Avail{})))
 
 	if k < SMALLEST_K {
 		k = SMALLEST_K
 	}
 
-	idx := k
+	var idx uint = k
 	// Check if idx is less than pool.kvalM and check if the current avail head node is empty (points to itself)
 	// increment idx to proceed through avail array in pool
 	for idx <= pool.kvalM && pool.avail[idx].next == &pool.avail[idx] {
@@ -140,20 +142,20 @@ func buddyMalloc(pool *BuddyPool, size uint) (unsafe.Pointer, error) {
 	// Check if idx is larger than the pool kval and return nil
 	// as no memory can be allocated
 	if idx > pool.kvalM {
-		err := unix.ENOMEM
+		var err error = unix.ENOMEM
 		fmt.Println("ERROR: No memory available to be allocated")
 		return nil, err
 	}
 
 	// Remove a block from avail
-	block := removeFirst(&pool.avail[idx])
+	var block *Avail = removeFirst(&pool.avail[idx])
 
 	// While idx is greater than the correct kval decrement i by one
 	for idx > k {
 		idx -= 1
 		// Split the block in avail into two
-		buddyOffset := uintptr(unsafe.Pointer(block)) + (uintptr(1) << idx)
-		buddy := (*Avail)(unsafe.Pointer(buddyOffset))
+		var buddyOffset uintptr = uintptr(unsafe.Pointer(block)) + (uintptr(1) << idx)
+		var buddy *Avail = (*Avail)(unsafe.Pointer(buddyOffset))
 		buddy.kval = uint16(idx)
 		buddy.tag = BLOCK_AVAIL
 		insertBlock(&pool.avail[idx], buddy)
@@ -168,7 +170,7 @@ func buddyMalloc(pool *BuddyPool, size uint) (unsafe.Pointer, error) {
 }
 
 func removeFirst(head *Avail) *Avail {
-	first := head.next
+	var first *Avail = head.next
 	if first == head {
 		return nil // list is empty
 	}
@@ -202,9 +204,9 @@ func buddyFree(pool *BuddyPool, ptr unsafe.Pointer) {
 	}
 
 	// Convert pointer to uintptr for pointer math
-	blockAddr := uintptr(ptr) - uintptr(unsafe.Sizeof(Avail{}))
+	var blockAddr uintptr = uintptr(ptr) - uintptr(unsafe.Sizeof(Avail{}))
 	// Cash block address to ptr
-	block := (*Avail)(unsafe.Pointer(blockAddr))
+	var block *Avail = (*Avail)(unsafe.Pointer(blockAddr))
 
 	block.tag = BLOCK_AVAIL
 	coalesce(pool, block)
@@ -217,10 +219,10 @@ func coalesce(pool *BuddyPool, block *Avail) {
 	// recursively to form the largest free block possible.
 	for {
 		// Locate the buddy
-		buddy := buddyCalc(pool, block)
+		var buddy *Avail = buddyCalc(pool, block)
 
 		// Defensive check: if buddy is outside pool range, bail
-		buddyPtr := uintptr(unsafe.Pointer(buddy))
+		var buddyPtr uintptr = uintptr(unsafe.Pointer(buddy))
 		if buddyPtr < pool.base || buddyPtr >= pool.base+pool.numBytes {
 			break // invalid memory: abort coalescing
 		}
@@ -266,7 +268,7 @@ func buddyDestroy(pool *BuddyPool) error {
 	}
 
 	// Get the pointer to the pool base to use for the unmap
-	dataPtr := unsafe.Pointer(pool.base)
+	var dataPtr unsafe.Pointer = unsafe.Pointer(pool.base)
 
 	// Unmaps the memory using byte slice cast as unix.Munmap expects []byte
 	// Cast the dataPointer as a large slice to be trimmed (pretending this is the start of a lare array in memory)
@@ -274,7 +276,7 @@ func buddyDestroy(pool *BuddyPool) error {
 	// uses go's three index slice syntax a[low : high : max] this means we
 	// use a slice from 0 to pool.numBytes and no more or less than pool.numBytes
 	// making an exact slice the memory range
-	err := unix.Munmap((*[maxPoolSize]byte)(dataPtr)[:pool.numBytes:pool.numBytes])
+	var err error = unix.Munmap((*[maxPoolSize]byte)(dataPtr)[:pool.numBytes:pool.numBytes])
 	if err != nil {
 		return err
 	}
