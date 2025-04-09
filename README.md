@@ -11,11 +11,6 @@ Balloc is a Go implementation of a buddy memory allocation system. The buddy all
 - Configurable memory pool sizes
 - Low overhead memory management
 
-## Installation
-
-```bash
-go get github.com/alexlewtschuk/balloc
-```
 
 ## Usage
 
