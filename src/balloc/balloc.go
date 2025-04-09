@@ -1,7 +1,7 @@
 package balloc
 
 import (
-	"fmt"
+	"log"
 	"sync"
 	"unsafe"
 
@@ -42,6 +42,7 @@ func buddyInit(pool *BuddyPool, size uintptr) error {
 	pool.lock.Lock()
 	defer pool.lock.Unlock()
 
+	// Evaluate and check default values
 	var kval uint
 	if size == 0 {
 		kval = DEFAULT_K
@@ -106,8 +107,8 @@ func btok(bytes uintptr) uint {
 	return k
 }
 
+// Calculate offset using go uintptr for pointer arithmetic workaround
 func buddyCalc(pool *BuddyPool, block *Avail) *Avail {
-	// Calculate offset using go uintptr for pointer arithmetic workaround
 	var offset uintptr = uintptr(unsafe.Pointer(block)) - pool.base // checks how far into the pool the block of memory is
 	var buddyOffset uintptr = offset ^ (uintptr(1) << block.kval)   // flip the kth bit to get the buddy's pool location
 	var buddyAddr uintptr = pool.base + buddyOffset                 // address of the buddy must be the distance of buddyOffset from the pool base
@@ -115,6 +116,8 @@ func buddyCalc(pool *BuddyPool, block *Avail) *Avail {
 	return (*Avail)(unsafe.Pointer(buddyAddr))
 }
 
+// Mallocs the memory based on the requested size and the availability
+// in the memory pool
 func buddyMalloc(pool *BuddyPool, size uint) (unsafe.Pointer, error) {
 	// Check if pool is nil
 	if pool == nil || size == 0 {
@@ -128,47 +131,52 @@ func buddyMalloc(pool *BuddyPool, size uint) (unsafe.Pointer, error) {
 	// Get the correct kval (block size) for the request
 	var k uint = btok(uintptr(size) + uintptr(unsafe.Sizeof(Avail{})))
 
+	// Ensure k is the minimum smallest value we take
 	if k < SMALLEST_K {
 		k = SMALLEST_K
 	}
 
-	var idx uint = k
-	// Check if idx is less than pool.kvalM and check if the current avail head node is empty (points to itself)
-	// increment idx to proceed through avail array in pool
-	for idx <= pool.kvalM && pool.avail[idx].next == &pool.avail[idx] {
-		idx++
+	// Declare variable to track the kval of available non-self referenced blocks in the avail[k] list
+	var availableK uint = k
+
+	// Check if availableK is less than pool.kvalM and check if the current avail head node is empty (points to itself)
+	// increment availableK to proceed through avail array in pool
+	for availableK <= pool.kvalM && pool.avail[availableK].next == &pool.avail[availableK] {
+		availableK++
 	}
 
-	// Check if idx is larger than the pool kval and return nil
+	// Check if availableK is larger than the pool kval and return nil
 	// as no memory can be allocated
-	if idx > pool.kvalM {
+	if availableK > pool.kvalM {
 		var err error = unix.ENOMEM
-		fmt.Println("ERROR: No memory available to be allocated")
+		log.Println("ERROR: No memory available to be allocated")
 		return nil, err
 	}
 
-	// Remove a block from avail
-	var block *Avail = removeFirst(&pool.avail[idx])
+	// Remove a block from avail if there is a block that can be alloc'd at avail[availableK]
+	var block *Avail = removeFirst(&pool.avail[availableK])
 
-	// While idx is greater than the correct kval decrement i by one
-	for idx > k {
-		idx -= 1
+	// While availableK is greater than the correct kval decrement i by one
+	for availableK > k {
+		availableK -= 1
 		// Split the block in avail into two
-		var buddyOffset uintptr = uintptr(unsafe.Pointer(block)) + (uintptr(1) << idx)
+		var buddyOffset uintptr = uintptr(unsafe.Pointer(block)) + (uintptr(1) << availableK)
 		var buddy *Avail = (*Avail)(unsafe.Pointer(buddyOffset))
-		buddy.kval = uint16(idx)
+		buddy.kval = uint16(availableK)
 		buddy.tag = BLOCK_AVAIL
-		insertBlock(&pool.avail[idx], buddy)
+		insertBlock(&pool.avail[availableK], buddy)
 
-		block.kval = uint16(idx)
+		block.kval = uint16(availableK)
 	}
 
+	// Update block tag
 	block.tag = BLOCK_RESERVED
 
 	return unsafe.Pointer(uintptr(unsafe.Pointer(block)) + uintptr(unsafe.Sizeof(Avail{}))), nil
 
 }
 
+// Removes the first head node of an *Avail list
 func removeFirst(head *Avail) *Avail {
 	var first *Avail = head.next
 	if first == head {
@@ -185,6 +193,7 @@ func removeFirst(head *Avail) *Avail {
 	return first
 }
 
+// Inserts the block into the head of the list of available blocks of its size
 func insertBlock(head *Avail, block *Avail) {
 	// Insert the block to the list: head <-> block <-> head.next
 	block.next = head.next
@@ -194,6 +203,7 @@ func insertBlock(head *Avail, block *Avail) {
 	head.next = block
 }
 
+// Frees the block and its buddy
 func buddyFree(pool *BuddyPool, ptr unsafe.Pointer) {
 	pool.lock.Lock()
 	defer pool.lock.Unlock()
@@ -205,23 +215,24 @@ func buddyFree(pool *BuddyPool, ptr unsafe.Pointer) {
 
 	// Convert pointer to uintptr for pointer math
 	var blockAddr uintptr = uintptr(ptr) - uintptr(unsafe.Sizeof(Avail{}))
-	// Cash block address to ptr
+	// Cast block address to ptr using unsafe.Pointer as an intermediary
 	var block *Avail = (*Avail)(unsafe.Pointer(blockAddr))
 
+	// Update block status and coalesce
 	block.tag = BLOCK_AVAIL
 	coalesce(pool, block)
 }
 
+// Attempt to merge this block with its buddy.
+// Merging only occurs if both blocks are the same size (kval)
+// and are both marked BLOCK_AVAIL. Coalescing continues
+// recursively to form the largest free block possible.
 func coalesce(pool *BuddyPool, block *Avail) {
-	// Attempt to merge this block with its buddy.
-	// Merging only occurs if both blocks are the same size (kval)
-	// and are both marked BLOCK_AVAIL. Coalescing continues
-	// recursively to form the largest free block possible.
 	for {
 		// Locate the buddy
 		var buddy *Avail = buddyCalc(pool, block)
 
-		// Defensive check: if buddy is outside pool range, bail
+		// If buddy is outside pool range, bail
 		var buddyPtr uintptr = uintptr(unsafe.Pointer(buddy))
 		if buddyPtr < pool.base || buddyPtr >= pool.base+pool.numBytes {
 			break // invalid memory: abort coalescing
@@ -231,6 +242,7 @@ func coalesce(pool *BuddyPool, block *Avail) {
 		if buddy.tag != BLOCK_AVAIL || buddy.kval != block.kval {
 			break
 		}
+
 		// Remove buddy from list. This is what ensures you have one larger block when merged
 		// as you are destroying the reference to the buddy which will always be the XOR'd
 		// compliment to the block
@@ -241,6 +253,7 @@ func coalesce(pool *BuddyPool, block *Avail) {
 
 		// Lower address becomes the larger block
 		var lowerBlock *Avail
+
 		// Check which address is lower
 		if uintptr(unsafe.Pointer(block)) < uintptr(unsafe.Pointer(buddy)) {
 			lowerBlock = block // continue with block
@@ -256,6 +269,7 @@ func coalesce(pool *BuddyPool, block *Avail) {
 	insertBlock(&pool.avail[block.kval], block) // insert coalesced block into its new avail[k] list
 }
 
+// Destroys and unmaps the memory pool
 func buddyDestroy(pool *BuddyPool) error {
 	pool.lock.Lock()
 	defer pool.lock.Unlock()
